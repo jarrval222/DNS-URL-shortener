@@ -1,72 +1,89 @@
-from flask import Flask, redirect
+#!/usr/bin/env python3
+import hashlib
 import requests
 import json
 
-app = Flask(__name__)
-
 API_KEY = "2a2ca3c783fe4e01b7454b2a587bb547.2w4JODbmZMLlwmKWCxGDdbfy12ZHmsULFlZZirAWaKGwg7DI5GDcqaGlAupQgoLJ81VPrOgxIALwbdkSYsKwrQ"
 DOMAIN = "jarrabaldv.es"
-URL = f"https://api.hosting.ionos.com/dns/v1/zones/{DOMAIN}/records"
-headers = {'X-API-Key': API_KEY, 'Content-Type': 'application/json'}
 
-@app.route('/debug')
-def debug():
-    try:
-        print("🔍 HACIENDO REQUEST A IONOS...")
-        response = requests.get(URL, headers=headers)
-        
-        print(f"📡 STATUS CODE: {response.status_code}")
-        print(f"📡 RESPONSE HEADERS: {dict(response.headers)}")
-        print(f"📡 RESPONSE TEXT: {response.text}")
-        
-        if response.status_code == 200:
-            records = response.json()
-            print(f"📝 REGISTROS ENCONTRADOS: {len(records)}")
-            
-            for i, record in enumerate(records):
-                print(f"  {i+1}. {record['name']} ({record['type']}) -> {record.get('content', 'N/A')}")
-            
-            return f"""
-            <h1>DEBUG IONOS API</h1>
-            <p>Status: {response.status_code}</p>
-            <p>Registros: {len(records)}</p>
-            <pre>{json.dumps(records, indent=2)}</pre>
-            """
-        else:
-            return f"❌ ERROR {response.status_code}: {response.text}"
-            
-    except Exception as e:
-        return f"💥 EXCEPCIÓN: {str(e)}"
-
-@app.route('/<codigo>')
-def redirigir(codigo):
-    try:
-        response = requests.get(URL, headers=headers)
-        
-        if response.status_code == 200:
-            records = response.json()
-            
-            for record in records:
-                if (record['type'] == 'TXT' and 
-                    record['name'] == f"{codigo}.{DOMAIN}"):
-                    
-                    url = record['content'].strip('"')
-                    return redirect(url)
-            
-            return f'No existe: {codigo}'
-        else:
-            return f'Error IONOS: {response.status_code} - {response.text}'
-            
-    except Exception as e:
-        return f'Error: {str(e)}'
-
-@app.route('/')
-def home():
-    return '''
-    <h1>Acortador URLs</h1>
-    <p>Usa: /yt, /gh, etc</p>
-    <p><a href="/debug">VER DEBUG IONOS</a></p>
-    '''
+def acortar_url():
+    print("🔗 ACORTADOR DE URLs - IONOS API")
+    print("=" * 50)
     
-if __name__ == '__main__':
-    app.run(debug=True, port=5000)
+    url_larga = input("Introduce la URL que quieres acortar: ").strip()
+    
+    if not url_larga:
+        print("❌ No se introdujo ninguna URL")
+        return
+    
+    # Generar código
+    codigo = hashlib.md5(url_larga.encode()).hexdigest()[:8]
+    print(f"📝 Código generado: {codigo}")
+    
+    headers = {
+        'X-API-Key': API_KEY,
+        'Content-Type': 'application/json'
+    }
+    
+    try:
+        # 1. Obtener zone ID
+        print("🔍 Buscando zona DNS...")
+        zonas_url = "https://api.hosting.ionos.com/dns/v1/zones"
+        respuesta = requests.get(zonas_url, headers=headers)
+        
+        if respuesta.status_code != 200:
+            print(f"❌ Error API (Zonas): {respuesta.status_code}")
+            print(respuesta.text)
+            return
+        
+        zonas = respuesta.json()
+        zone_id = None
+        
+        for zona in zonas:
+            if zona['name'] == DOMAIN:
+                zone_id = zona['id']
+                break
+        
+        if not zone_id:
+            print(f"❌ No se encontró el dominio {DOMAIN}")
+            return
+        
+        print(f"✅ Zona encontrada: {zone_id}")
+        
+        # 2. Crear registro con formato EXACTO de IONOS
+        print("🔄 Creando registro TXT...")
+        records_url = f"https://api.hosting.ionos.com/dns/v1/zones/{zone_id}/records"
+        
+        # FORMATO EXACTO según documentación IONOS
+        datos = {
+            "name": f"{codigo}.{DOMAIN}",
+            "type": "TXT",
+            "content": url_larga,
+            "ttl": 3600,
+            "prio": 0,
+            "disabled": False
+        }
+        
+        print(f"📤 Enviando: {json.dumps(datos, indent=2)}")
+        
+        # Probar con PUT en lugar de POST
+        respuesta = requests.post(records_url, headers=headers, json=[datos])
+        
+        print(f"📡 Status: {respuesta.status_code}")
+        print(f"📡 Respuesta: {respuesta.text}")
+        
+        if respuesta.status_code in [200, 201]:
+            url_corta = f"{codigo}.{DOMAIN}"
+            print("\n" + "=" * 50)
+            print("✅ URL ACORTADA CREADA")
+            print("=" * 50)
+            print(f"URL Corta: {url_corta}")
+            print(f"URL Larga: {url_larga}")
+        else:
+            print(f"❌ Error: {respuesta.status_code}")
+            
+    except Exception as e:
+        print(f"💥 Error: {e}")
+
+if __name__ == "__main__":
+    acortar_url()
