@@ -1,24 +1,17 @@
-#!/usr/bin/env python3
+from flask import Flask, request, redirect
 import hashlib
 import requests
 import json
+import dns.resolver
+
+app = Flask(__name__)
 
 API_KEY = "2a2ca3c783fe4e01b7454b2a587bb547.2w4JODbmZMLlwmKWCxGDdbfy12ZHmsULFlZZirAWaKGwg7DI5GDcqaGlAupQgoLJ81VPrOgxIALwbdkSYsKwrQ"
 DOMAIN = "jarrabaldv.es"
 
-def acortar_url():
-    print("🔗 ACORTADOR DE URLs - IONOS API")
-    print("=" * 50)
-    
-    url_larga = input("Introduce la URL que quieres acortar: ").strip()
-    
-    if not url_larga:
-        print("❌ No se introdujo ninguna URL")
-        return
-    
+def crear_url_corta(url_larga):
     # Generar código
     codigo = hashlib.md5(url_larga.encode()).hexdigest()[:8]
-    print(f"📝 Código generado: {codigo}")
     
     headers = {
         'X-API-Key': API_KEY,
@@ -27,14 +20,11 @@ def acortar_url():
     
     try:
         # 1. Obtener zone ID
-        print("🔍 Buscando zona DNS...")
         zonas_url = "https://api.hosting.ionos.com/dns/v1/zones"
         respuesta = requests.get(zonas_url, headers=headers)
         
         if respuesta.status_code != 200:
-            print(f"❌ Error API (Zonas): {respuesta.status_code}")
-            print(respuesta.text)
-            return
+            return None
         
         zonas = respuesta.json()
         zone_id = None
@@ -45,16 +35,11 @@ def acortar_url():
                 break
         
         if not zone_id:
-            print(f"❌ No se encontró el dominio {DOMAIN}")
-            return
+            return None
         
-        print(f"✅ Zona encontrada: {zone_id}")
-        
-        # 2. Crear registro con formato EXACTO de IONOS
-        print("🔄 Creando registro TXT...")
+        # 2. Crear registro
         records_url = f"https://api.hosting.ionos.com/dns/v1/zones/{zone_id}/records"
         
-        # FORMATO EXACTO según documentación IONOS
         datos = {
             "name": f"{codigo}.{DOMAIN}",
             "type": "TXT",
@@ -64,26 +49,63 @@ def acortar_url():
             "disabled": False
         }
         
-        print(f"📤 Enviando: {json.dumps(datos, indent=2)}")
-        
-        # Probar con PUT en lugar de POST
         respuesta = requests.post(records_url, headers=headers, json=[datos])
         
-        print(f"📡 Status: {respuesta.status_code}")
-        print(f"📡 Respuesta: {respuesta.text}")
-        
         if respuesta.status_code in [200, 201]:
-            url_corta = f"{codigo}.{DOMAIN}"
-            print("\n" + "=" * 50)
-            print("✅ URL ACORTADA CREADA")
-            print("=" * 50)
-            print(f"URL Corta: {url_corta}")
-            print(f"URL Larga: {url_larga}")
+            return codigo
         else:
-            print(f"❌ Error: {respuesta.status_code}")
+            return None
             
     except Exception as e:
-        print(f"💥 Error: {e}")
+        return None
 
-if __name__ == "__main__":
-    acortar_url()
+def obtener_url_destino(codigo):
+    """Obtiene la URL real desde el DNS"""
+    try:
+        respuesta = dns.resolver.resolve(f"{codigo}.{DOMAIN}", 'TXT')
+        for registro in respuesta:
+            return str(registro).strip('"')
+    except:
+        return None
+
+@app.route('/<codigo>')
+def redirigir(codigo):
+    """Redirige desde la URL corta a la URL real"""
+    url_destino = obtener_url_destino(codigo)
+    if url_destino:
+        return redirect(url_destino)
+    else:
+        return "URL no encontrada", 404
+
+@app.route('/', methods=['GET', 'POST'])
+def home():
+    if request.method == 'POST':
+        url_larga = request.form['url_larga']
+        codigo = crear_url_corta(url_larga)
+        
+        if codigo:
+            url_corta = f"{codigo}.{DOMAIN}"
+            return f'''
+            <h1>✅ URL Acortada Creada</h1>
+            <p><strong>URL Original:</strong> {url_larga}</p>
+            <p><strong>URL Corta:</strong> {url_corta}</p>
+            <p><a href="http://{url_corta}">Probar: http://{url_corta}</a></p>
+            <a href="/">Volver</a>
+            '''
+        else:
+            return '''
+            <h1>❌ Error</h1>
+            <p>No se pudo crear la URL</p>
+            <a href="/">Volver</a>
+            '''
+    
+    return '''
+    <h1>🔗 Acortador de URLs</h1>
+    <form method="post">
+        <input type="url" name="url_larga" placeholder="https://ejemplo.com" required>
+        <button type="submit">Acortar URL</button>
+    </form>
+    '''
+
+if __name__ == '__main__':
+    app.run(host='127.0.0.1', port=5000, debug=True)
